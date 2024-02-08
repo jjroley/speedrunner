@@ -1,28 +1,31 @@
 /**
  * KeyManager class
  *
- * handles everything relating to keys
+ * Handles everything relating to keys.
  */
-const KeyManager = (function() {
-	function KeyManager() {
-			this.keys = {} // stores keys
-			this.keyCodeMap = {} // maps keycodes to key names
-			this.current = {} // currently pressed keys
-			this.prev = {} // previously pressed keys
-			this.chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-_!@#$%^&*?"; // chars for speedrun code
-			this.isRecording = false // whether or not we're recording a speedrun
-			this.speedrunData = {} // stores speedrun codes
-			this.speedruns = {} // stores speedruns
-			this.speedrun = null // the current speedrun
-			this.speedrunInProgress = false // whether or not we're playing a speedrun
-			this.speedrunTimer = 0
-			this.verboseSpeedrun = {}
+
+class KeyManager {
+	constructor() {
+		this.keys = {} // stores keys
+		this.keyCodeMap = {} // maps keycodes to key names
+		this.current = {} // currently pressed keys
+		this.prev = {} // previously pressed keys
+		this.chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-_!@#$%^&*?"; // chars for speedrun code
+		this.isRecording = false // whether or not we're recording a speedrun
+		this.speedrunData = {} // stores speedrun codes
+		this.speedruns = {} // stores speedruns
+		this.speedrun = null // the current speedrun
+		this.speedrunInProgress = false // whether or not we're playing a speedrun
+		this.speedrunTimer = 0
+		this.verboseSpeedrun = {}
 	}
-	KeyManager.prototype.register = function(key, name, keyCode) {
-			this.keys[key] =  { keyCode: keyCode, name: name }
-			this.keyCodeMap[keyCode] = key
+
+	register(key, name, keyCode) {
+		this.keys[key] =  { keyCode: keyCode, name: name }
+		this.keyCodeMap[keyCode] = key
 	}
-	KeyManager.prototype.isKeyPressed = function(selector, state) {
+
+	isKeyPressed(selector, state) {
 			if(typeof selector === 'string') {
 					selector = (
 							this.keys[selector] &&
@@ -34,29 +37,34 @@ const KeyManager = (function() {
 			}
 			return state[selector]
 	}
-	KeyManager.prototype.pressed = function(selector) {
+
+	pressed(selector) {
 			return this.isKeyPressed(selector, this.current)
 	}
-	KeyManager.prototype.pressStart = function(selector) {
+
+	pressStart(selector) {
 			return (
 					this.isKeyPressed(selector, this.current) &&
 					!this.isKeyPressed(selector, this.prev)
 			)
 	}
-	KeyManager.prototype.pressEnd = function(selector) {
+
+	pressEnd(selector) {
 			return (
 					!this.isKeyPressed(selector, this.current) &&
 					this.isKeyPressed(selector, this.prev)
 			)
 	}
-	KeyManager.prototype.keyPressed = function(keyCode) {
+
+	keyPressed(keyCode) {
 			this.current[keyCode] = true
 	}
-	KeyManager.prototype.keyReleased = function(keyCode) {
+	
+	keyReleased(keyCode) {
 			delete this.current[keyCode]
 	}
- 
-	KeyManager.prototype.update = function() {
+
+	update() {
 			if (this.isRecording) {
 					const allKeys  = Object.assign({}, this.current, this.prev)
 
@@ -83,7 +91,7 @@ const KeyManager = (function() {
 
 			this.prev = Object.assign({}, this.current)
 	}
-	KeyManager.prototype.parseSpeedrun = function(speedrun) {
+	parseSpeedrun(speedrun) {
 			const keys = speedrun.split(',');
 			const output = {};
 			for(let i = 0; i < keys.length; i++) {
@@ -93,7 +101,7 @@ const KeyManager = (function() {
 			}
 			return output;
 	}
-	KeyManager.prototype.parseKeyPresses = function(data) {
+	parseKeyPresses(data) {
 			let currentBlock = 0
 
 			const sections = data.match(/\d+|\D+/g);
@@ -117,11 +125,11 @@ const KeyManager = (function() {
 
 			return togglePoints;
 	}
-	KeyManager.prototype.updateSpeedrun = function(keyCode) {
+	updateSpeedrun(keyCode) {
 			this.verboseSpeedrun[keyCode] = this.verboseSpeedrun[keyCode] || []
 			this.verboseSpeedrun[keyCode].push(this.speedrunTimer)
 	}
-	KeyManager.prototype.buildSpeedrunString = function(arr) {
+	buildSpeedrunString(arr) {
 			let str = ''
 			
 			let lastBlock = 0, lastChar = false
@@ -151,44 +159,36 @@ const KeyManager = (function() {
 
 			return str
 	}
-	KeyManager.prototype.startRecording = function() {
+	startRecording() {
 			this.isRecording = true;
 			this.speedrunData = {};
 			this.speedrunTimer = 0;
 	}
-	KeyManager.prototype.stopRecording = function() {
+	stopRecording() {
 			this.isRecording = false;
 			this.speedrunData = this.buildSpeedrunObject(this.verboseSpeedrun)
 	}
-	KeyManager.prototype.buildSpeedrunObject = function(verboseSpeedrun) {
+	buildSpeedrunObject(verboseSpeedrun) {
 			const data = {}
 			for(const keyCode in verboseSpeedrun) {
 					data[keyCode] = this.buildSpeedrunString(verboseSpeedrun[keyCode])
 			}
 			return data
 	}
-	KeyManager.prototype.printSpeedrun = function() {
+	printSpeedrun() {
 			const output = Object.entries(this.speedrunData).map(([keyCode, data]) => {
 					return keyCode + data;
 			})
 			
 			console.log(output.join(','));
-			// console.log(this.verboseSpeedrun)
-			console.log(JSON.stringify(this.verboseSpeedrun))
-			console.log(this.parseSpeedrun(output.join(',')))
 	}
-	KeyManager.prototype.loadSpeedrun = function(name, speedrun) {
+	loadSpeedrun(name, speedrun) {
 			this.speedruns[name] = speedrun
 	}
-	KeyManager.prototype.playSpeedrun = function(name) {
+	playSpeedrun(name) {
 			this.speedrunInProgress = true;
 			this.speedrun = typeof this.speedruns[name] === 'string' ? this.parseSpeedrun(this.speedruns[name]) : this.speedruns[name];
 			this.isRecording = false;
 			this.speedrunTimer = 0;
-
-			console.log(this.speedrun)
-			console.log(this.parseSpeedrun(this.speedruns[name]))
 	}
-
-	return KeyManager;
-})();
+}
