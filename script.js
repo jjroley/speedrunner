@@ -169,7 +169,7 @@ function setup() {
 	})
 
 	game.level.registerEntity("@", function (x, y, w, h) {
-		return new Player(x + 2, y + 2, w - 4, h - 4)
+		return new Player(x + 6, y + 6, w - 12, h - 12)
 	})
 
 	game.level.registerTile('R', function (w, h) {
