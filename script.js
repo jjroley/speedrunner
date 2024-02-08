@@ -22,13 +22,12 @@ const view = {
  * 
  * Brings everything together, let the magic begin.
  */
-const Game = (function () {
-	function Game() {
+class Game {
+	constructor() {
 		this.scene = new SceneHandler('menu', this)
 		this.level = new LevelManager()
 	}
-	return Game
-})();
+}
 
 let game, keys;
 

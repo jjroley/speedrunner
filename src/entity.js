@@ -42,7 +42,7 @@ class Entity {
 		this.x += this.xVel
 		this.y += this.yVel
 	}
-	
+
 	update() {
 		// if on moving object, apply frictional force
 		if (this.groundObject) {
@@ -58,56 +58,9 @@ class Entity {
 		const vec = getCollisionResolutionVector(this, vertices)
 
 		if (vec) {
-			// this.x += vec.x
-			// this.y += vec.y
-
 			this.xVel += vec.x
 			this.yVel += vec.y
 		}
-
-		// if(obj.tile === '^') {
-		//     const offset = (this.x + this.w / 2) - (obj.x + obj.w / 2)
-		//     const absoluteOffset = Math.abs(offset) - this.w / 2
-
-		//     if(absoluteOffset <= 0 || this.prevY > obj.y + obj.h) {
-		//         if(this.y + this.h * 0.5 < obj.y + obj.h * 0.5) {
-		//             this.y = obj.y - this.h
-		//             this.yVel = 0
-		//             this.collisions.bottom = true
-		//             this.groundObject = obj
-		//         } else {
-		//             this.y = obj.y + obj.h
-		//             this.yVel = 0
-		//             this.collisions.top = true
-		//         }
-		//     } else {
-		//         const penetrationY = this.y + this.h - obj.y - absoluteOffset * 2
-		//         const penetrationX = penetrationY / 2
-		//         if(penetrationY > 0 && this.prevY + this.h <= obj.y + obj.h) {
-		//             const newX = (this.x - this.prevX)
-
-		//             this.yVel = 0
-
-		//             this.y -= penetrationY * 0.5
-		//             if(this.x !== this.prevX) {
-		//                 this.x -= (offset > 0 ? -penetrationX : penetrationX) * 0.5
-		//             }
-
-		//             this.collisions.bottom = true
-		//             this.groundObject = obj
-		//         }
-		//     }
-
-		//     if(this.prevY + this.h > obj.y + obj.h) {
-		//         if(this.prevXVel) {
-		//             // this.x = this.prevXVel > 0 ? obj.x - this.w : obj.x + obj.w
-		//         }
-		//     }
-		// }
-
-		// if(obj.tile === 'R') {
-
-		// }
 	}
 
 	resolveYCollision(obj) {
@@ -135,7 +88,7 @@ class Entity {
 		// way to make collision resolutions are less wacky
 		collidingObjects.sort(sortByOverlapArea(this))
 
-		for (var i = 0; i < collidingObjects.length; i++) {
+		for (let i = 0; i < collidingObjects.length; i++) {
 			const obj = collidingObjects[i];
 
 			// cases where we're touching the object but have already applied collision
