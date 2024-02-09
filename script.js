@@ -246,7 +246,6 @@ function setup() {
 	game.level.camera.viewport.h = height / view.scale
 }
 
-// PJS functions
 function draw() {
 	background(0)
 	push()
@@ -277,3 +276,11 @@ function windowResized() {
 	game.level.camera.viewport.w = width / view.scale
 	game.level.camera.viewport.h = height / view.scale
 }
+
+Object.assign(window, {
+	setup,
+	draw,
+	keyPressed,
+	keyReleased,
+	windowResized
+})

@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Speedrunner</title>
+    <script src="https://cdn.jsdelivr.net/gh/NS236/p5.js-ka@main/lib/p5.js"></script>
+    <style>
+		* {
+		  margin: 0;
+		  padding: 0;
+		  box-sizing: border-box;
+		}
+		
+		canvas {
+		  width: 100vw;
+		  height: 100vh;
+		}
+	</style>
+  </head>
+  <body>
+    <script type="module">
+		/**
+		 * Helper functions
+		 */
+		
+		function overlap(a, b) {
+			return (
+					a.x + a.w > b.x &&
+					a.x < b.x + b.w &&
+					a.y + a.h > b.y &&
+					a.y < b.y + b.h
+			)
+		}
+		
+		function pointInRect(x, y, rect) {
+			return (
+					x > rect.x &&
+					x < rect.x + rect.w &&
+					y > rect.y &&
+					y < rect.y + rect.h
+			)
+		}
+		
+		function getOverlapArea(a, b) {
+			return (
+					Math.min(a.x + a.w, b.x + b.w) -
+					Math.max(a.x, b.x)
+			) * (
+					Math.min(a.y + a.h, b.y + b.h) -
+					Math.max(a.y, b.y)
+			)
+		}
+		
+		function sortByOverlapArea(obj) {
+			return function(a, b) {
+					return (
+							getOverlapArea(obj, b) -
+							getOverlapArea(obj, a)
+					)
+			}
+		}
+		
+		function handleResize() {
+			const scaleX = width / MAX_VIEW
+			const scaleY = height / (MAX_VIEW / view.aspect)
+		
+			view.scale = max(scaleX, scaleY)
+		}
+		
+		function closestPointOnLine(px, py, x1, y1, x2, y2) {
+			const len = dist(x1, y1, x2, y2)
+			const dot = ( (px - x1) * (x2 - x1) + (py - y1) * (y2 - y1) ) / len ** 2
+		
+			return {
+					x: x1 + dot * (x2 - x1),
+					y: y1 + dot * (y2 - y1)
+			}
+		}
+		
+		function isPointLeftOfLine(px, py, x1, y1, x2, y2) {
+			return ((x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)) < 0
+		}
+		
+		function getCollisionResolutionVectorForLine(px, py, x1, y1, x2, y2) {
+			const closest = closestPointOnLine(px, py, x1, y1, x2, y2)
+			const angle   = atan2(closest.y - py, closest.x - px)
+			const d       = dist(px, py, closest.x, closest.y)
+		
+			if(isPointLeftOfLine(px, py, x1, y1, x2, y2)) {
+					return false
+			}
+		
+			return {
+					x: cos(angle) * d,
+					y: sin(angle) * d,
+					angle: angle,
+					dist: d,
+			}
+		}
+		
+		function getCollisionResolutionVector(rect, vertices) {
+			const intersectingLines = []
+		
+			const points = [
+					[rect.x, rect.y],
+					[rect.x + rect.w, rect.y],
+					[rect.x + rect.w, rect.y + rect.h],
+					[rect.x, rect.y + rect.h]
+			]
+		
+			for(let i = 0; i < vertices.length; i++) {
+					const cv = vertices[i]
+					const nv = vertices[(i + 1) % vertices.length]
+		
+					let largestPDist = 0;
+					let largestVec = false
+					let isIntersecting = false
+					for(const point of points) {
+							const vec = getCollisionResolutionVectorForLine(point[0], point[1], cv[0], cv[1], nv[0], nv[1])
+							if(vec && vec.dist > largestPDist) {
+									largestPDist = vec.dist
+									largestVec = [cv[0], cv[1], nv[0], nv[1], vec]
+							}
+					}
+					if(largestVec) {
+							intersectingLines.push(largestVec)
+					} else {
+							return false
+					}
+			}
+		
+			if(intersectingLines.length === 0) {
+					return false
+			}
+		
+			let targetPoint = false
+			
+			for(let i = 0; i < intersectingLines.length; i++) {
+					const line = intersectingLines[i]
+		
+					const vec = line[4]
+					if(!targetPoint || vec.dist < targetPoint.dist) {
+							targetPoint = vec
+					}
+			}
+		
+			return targetPoint
+		}
+		
+		function getLineIntersection(x1, y1, x2, y2, x3, y3, x4, y4) {
+			const uA = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3)) / ((y4-y3)*(x2-x1) - (x4-x3)*(y2-y1));
+			const uB = ((x2-x1)*(y1-y3) - (y2-y1)*(x1-x3)) / ((y4-y3)*(x2-x1) - (x4-x3)*(y2-y1));
+		
+			return {
+					x: x1 + (uA * (x2-x1)),
+					y: y1 + (uA * (y2-y1)),
+					intersecting: uA >= 0 && uA <= 1 && uB >= 0 && uB <= 1
+			}
+		}
+		
+/**
+		 * KeyManager class
+		 *
+		 * Handles everything relating to keys.
+		 */
+		
+		class KeyManager {
+			constructor() {
+				this.keys = {} // stores keys
+				this.keyCodeMap = {} // maps keycodes to key names
+				this.current = {} // currently pressed keys
+				this.prev = {} // previously pressed keys
+				this.chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-_!@#$%^&*?"; // chars for speedrun code
+				this.isRecording = false // whether or not we're recording a speedrun
+				this.speedrunData = {} // stores speedrun codes
+				this.speedruns = {} // stores speedruns
+				this.speedrun = null // the current speedrun
+				this.speedrunInProgress = false // whether or not we're playing a speedrun
+				this.speedrunTimer = 0
+				this.verboseSpeedrun = {}
+			}
+		
+			register(key, name, keyCode) {
+				this.keys[key] = { keyCode: keyCode, name: name }
+				this.keyCodeMap[keyCode] = key
+			}
+		
+			isKeyPressed(selector, state) {
+				if (typeof selector === 'string') {
+					selector = (
+						this.keys[selector] &&
+						this.keys[selector].keyCode
+					)
+				}
+				if (!selector) {
+					return false
+				}
+				return state[selector]
+			}
+		
+			pressed(selector) {
+				return this.isKeyPressed(selector, this.current)
+			}
+		
+			pressStart(selector) {
+				return (
+					this.isKeyPressed(selector, this.current) &&
+					!this.isKeyPressed(selector, this.prev)
+				)
+			}
+		
+			pressEnd(selector) {
+				return (
+					!this.isKeyPressed(selector, this.current) &&
+					this.isKeyPressed(selector, this.prev)
+				)
+			}
+		
+			keyPressed(keyCode) {
+				this.current[keyCode] = true
+			}
+		
+			keyReleased(keyCode) {
+				delete this.current[keyCode]
+			}
+		
+			update() {
+				if (this.isRecording) {
+					const allKeys = Object.assign({}, this.current, this.prev)
+		
+					for (const keyCode in allKeys) {
+						if (this.current[keyCode] !== this.prev[keyCode]) {
+							this.updateSpeedrun(keyCode)
+						}
+					}
+					this.speedrunTimer++
+				} else if (this.speedrunInProgress) {
+					for (const keyCode in this.speedrun) {
+						const key = this.speedrun[keyCode]
+						if (key[0] === this.speedrunTimer) {
+							if (this.current[keyCode]) {
+								delete this.current[keyCode]
+							} else {
+								this.current[keyCode] = true
+							}
+							key.shift()
+						}
+					}
+					this.speedrunTimer++
+				}
+		
+				this.prev = Object.assign({}, this.current)
+			}
+		
+			parseSpeedrun(speedrun) {
+				const keys = speedrun.split(',');
+				const output = {};
+				for (let i = 0; i < keys.length; i++) {
+					const data = keys[i];
+					const keyCode = Number(data.slice(0, 2));
+					output[keyCode] = this.parseKeyPresses(data.slice(2));
+				}
+				return output;
+			}
+		
+			parseKeyPresses(data) {
+				let currentBlock = 0
+		
+				const sections = data.match(/\d+|\D+/g);
+				const togglePoints = [];
+				for (let i = 0; i < sections.length; i++) {
+					const section = sections[i];
+					if (isNaN(section)) {
+						for (let j = 0; j < section.length; j++) {
+							const char = section[j];
+							const charIndex = this.chars.indexOf(char);
+							const lastTogglePoint = togglePoints[togglePoints.length - 1];
+							if (lastTogglePoint && charIndex <= (lastTogglePoint % this.chars.length)) {
+								currentBlock++
+							}
+							togglePoints.push((currentBlock * this.chars.length) + charIndex);
+						}
+					} else {
+						currentBlock += Math.max(parseInt(section, 10), 1);
+					}
+				}
+		
+				return togglePoints;
+			}
+		
+			updateSpeedrun(keyCode) {
+				this.verboseSpeedrun[keyCode] = this.verboseSpeedrun[keyCode] || []
+				this.verboseSpeedrun[keyCode].push(this.speedrunTimer)
+			}
+		
+			buildSpeedrunString(arr) {
+				let str = ''
+		
+				let lastBlock = 0, lastChar = false
+				for (const frame of arr) {
+					const currentBlock = Math.floor(frame / this.chars.length)
+					const currentChar = frame % this.chars.length
+		
+					if (currentBlock > lastBlock) {
+						if (currentBlock === lastBlock + 1) {
+							if (lastChar !== false && currentChar > lastChar) {
+								str += '0'
+							}
+							if (lastChar === false) {
+								str += '1'
+							}
+						} else {
+							let amount = currentChar > lastChar || lastChar === false ? 0 : 1
+							str += (currentBlock - lastBlock - amount).toString()
+						}
+					}
+		
+					str += this.chars[currentChar]
+		
+					lastBlock = currentBlock
+					lastChar = currentChar
+				}
+		
+				return str
+			}
+		
+			startRecording() {
+				this.isRecording = true;
+				this.speedrunData = {};
+				this.speedrunTimer = 0;
+			}
+		
+			stopRecording() {
+				this.isRecording = false;
+				this.speedrunData = this.buildSpeedrunObject(this.verboseSpeedrun)
+			}
+		
+			buildSpeedrunObject(verboseSpeedrun) {
+				const data = {}
+				for (const keyCode in verboseSpeedrun) {
+					data[keyCode] = this.buildSpeedrunString(verboseSpeedrun[keyCode])
+				}
+				return data
+			}
+		
+			printSpeedrun() {
+				const output = Object.entries(this.speedrunData).map(([keyCode, data]) => {
+					return keyCode + data;
+				})
+		
+				console.log(output.join(','));
+			}
+		
+			loadSpeedrun(name, speedrun) {
+				this.speedruns[name] = speedrun
+			}
+		
+			playSpeedrun(name) {
+				this.speedrunInProgress = true;
+				this.speedrun = typeof this.speedruns[name] === 'string' ? this.parseSpeedrun(this.speedruns[name]) : this.speedruns[name];
+				this.isRecording = false;
+				this.speedrunTimer = 0;
+			}
+		}
+		
+/**
+		 * Particle class
+		 */
+		class Particle {
+			constructor(x, y, s, color, r, xVel, yVel) {
+				this.x = x
+				this.y = y
+				this.s = s
+				this.color = color
+				this.r = r
+				this.xVel = xVel
+				this.yVel = yVel
+			}
+		
+			update() {
+				this.x += this.xVel
+				this.y += this.yVel
+			}
+		
+			display(viewport) {
+				this.aabb = {
+					x: this.x - this.s,
+					y: this.y - this.s,
+					w: this.s * 2,
+					h: this.s * 2
+				}
+				if(overlap(this.aabb, viewport)) {
+					push()
+					translate(this.x, this.y)
+					rotate(this.r)
+					fill(this.color)
+					rect(-this.s / 2, -this.s / 2, this.s, this.s)
+					pop()
+				}
+			}
+		
+			static createSystem({
+				x,
+				y,
+				s,
+				r,
+				color
+			}) {
+		
+			}
+		}
+		
+
+		/**
+		 * Camera class
+		 * 
+		 * Handles smoothly following an entity and applying a world translate
+		 */
+		
+		class Camera {
+			constructor() {
+				this.viewport = {
+					x: 0,
+					y: 0,
+					w: width,
+					h: height
+				}
+			}
+		
+			follow(entity) {
+				const centerX = entity.x + entity.w / 2 - this.viewport.w / 2
+				const centerY = entity.y + entity.h / 2 - this.viewport.h / 2
+				this.viewport.x = lerp(this.viewport.x, centerX, 0.1)
+				this.viewport.y = lerp(this.viewport.y, centerY, 0.1)
+			}
+			center(entity) {
+				this.viewport.x = entity.x + entity.w / 2 - this.viewport.w / 2
+				this.viewport.y = entity.y + entity.h / 2 - this.viewport.h / 2
+			}
+			applyToWorld() {
+				translate(-this.viewport.x, -this.viewport.y)
+			}
+		}
+		
+/**
+		 * LevelManager class
+		 * 
+		 * Keeps track of everything level-based.
+		 */
+		class LevelManager {
+			constructor() {
+				this.current = null // the current level
+				this.levels = [] // stores registered levels
+				this.registeredTiles = {} // stores registered tiles
+				this.tileMap = [] // stores the current tile map
+				this.entityTypes = {} // stores entity types
+				this.entities = [] // stores all entities
+				this.levelWidth = 0
+				this.levelHeight = 0
+				this.camera = new Camera()
+			}
+		
+			add(options, level) {
+				this.levels.push({ options: options, level: level })
+			}
+		
+			start(levelIndex) {
+				if (!this.levels[levelIndex]) {
+					throw {
+						message: "Invalid level index: " + levelIndex
+					}
+				}
+				this.current = this.levels[levelIndex]
+				this.loadLevel()
+			}
+		
+			getCollidingTiles(entity) {
+				const minX = Math.max(Math.floor(entity.x / BLOCK_SIZE), 0)
+				const maxX = Math.min(Math.floor((entity.x + entity.w) / BLOCK_SIZE), this.levelWidth - 1)
+				const minY = Math.max(Math.floor(entity.y / BLOCK_SIZE), 0)
+				const maxY = Math.min(Math.floor((entity.y + entity.h) / BLOCK_SIZE), this.levelHeight - 1)
+		
+				const tiles = []
+		
+				for (let x = minX; x <= maxX; x++) {
+					for (let y = minY; y <= maxY; y++) {
+						const tile = this.tileMap[y][x]
+						if (tile === ' ') {
+							continue;
+						}
+		
+						const tileData = {
+							x: x * BLOCK_SIZE,
+							y: y * BLOCK_SIZE,
+							w: BLOCK_SIZE,
+							h: BLOCK_SIZE,
+							tile: tile
+						}
+		
+						if (this.registeredTiles[tile].vertices) {
+							tileData.vertices = this.registeredTiles[tile].vertices(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+						}
+		
+						tiles.push(tileData)
+					}
+				}
+		
+				return tiles
+			}
+		
+			getCollidingEntities(entity, entities) {
+				return entities.filter(function (e) {
+					return e !== entity && overlap(e, entity)
+				})
+			}
+		
+			registerTile(id, img, vertices) {
+				const tile = {}
+				if (typeof img === 'function') {
+					clear()
+					tile.img = img(BLOCK_SIZE, BLOCK_SIZE)
+				} else {
+					tile.img = img
+				}
+				if (vertices) {
+					tile.vertices = vertices
+				}
+				this.registeredTiles[id] = tile
+			}
+		
+			registerEntity(id, spawnCallback) {
+				this.entityTypes[id] = spawnCallback
+			}
+		
+			loadLevel() {
+				const level = this.current.level
+		
+				this.entities = [] // clear any entities
+				this.tileMap = [] // clear tile map
+		
+				this.levelWidth = level[0].length
+				this.levelHeight = level.length
+		
+				for (let i = 0; i < this.levelHeight; i++) {
+					this.tileMap[i] = []
+					for (let j = 0; j < this.levelWidth; j++) {
+						const item = level[i][j]
+						this.tileMap[i][j] = ' '
+						if (item === ' ') {
+							continue;
+						}
+						const x = j * BLOCK_SIZE
+						const y = i * BLOCK_SIZE
+		
+						// checks for an existing entity type
+						if (this.entityTypes[item]) {
+							// calls the registered spawn callback
+							this.entities.push(this.entityTypes[item](x, y, BLOCK_SIZE, BLOCK_SIZE))
+						} else if (this.registeredTiles[item]) {
+							this.tileMap[i][j] = item // add tile to tilemap
+						}
+					}
+				}
+			}
+		
+			displayTileMap(viewport) {
+				const minX = max(0, Math.floor(viewport.x / BLOCK_SIZE))
+				const maxX = min(this.levelWidth - 1, Math.ceil((viewport.x + viewport.w) / BLOCK_SIZE))
+				const minY = max(0, Math.floor(viewport.y / BLOCK_SIZE))
+				const maxY = min(this.levelHeight - 1, Math.ceil((viewport.y + viewport.h) / BLOCK_SIZE))
+		
+				for (let i = minX; i <= maxX; i++) {
+					for (let j = minY; j <= maxY; j++) {
+						const tile = this.tileMap[j][i]
+						if (tile === ' ' || !tile) {
+							continue;
+						}
+						if (this.registeredTiles[tile]) {
+							image(this.registeredTiles[tile].img, i * BLOCK_SIZE, j * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
+						}
+					}
+				}
+			}
+		
+			displayEntities(viewport) {
+				for (let i = 0; i < this.entities.length; i++) {
+					const entity = this.entities[i]
+					if (overlap(entity, viewport)) {
+						entity.display()
+					}
+				}
+			}
+		
+			display() {
+				push();
+				this.camera.applyToWorld()
+				this.displayTileMap(this.camera.viewport);
+				this.displayEntities(this.camera.viewport);
+				pop();
+			}
+		
+			update() {
+				const viewport = this.camera.viewport
+		
+				// only update entities in update window
+				const entitiesToProcess = this.entities.filter(function (e) {
+					return overlap(e, viewport)
+				})
+		
+				for (let i = 0; i < entitiesToProcess.length; i++) {
+					const entity = entitiesToProcess[i]
+					entity.beforeCollision()
+		
+					// gets all collisions, both tile based and other-entity based
+					let collisions = this
+						.getCollidingEntities(entity, entitiesToProcess)
+						.concat(this.getCollidingTiles(entity))
+		
+					entity.resolveCollisions(collisions)
+					entity.update()
+				}
+			}
+		}
+		
+
+		/**
+		 * Scene class
+		 * 
+		 * Used with the SceneHandler class, this mananges a individual scene
+		 */
+		
+		class Scene {
+			constructor(callback, context) {
+				this.sceneContext = context || this
+				this.callback = callback.bind(this.sceneContext)
+				this.actions = {
+					load: []
+				}
+				this.loaded = false
+				this.state = {}
+				this.setState = this.setState.bind(this)
+				return this
+			}
+		
+			on(action, callback) {
+				if (!this.actions[action]) {
+					throw {
+						message: "Invalid action: " + action
+					}
+				}
+				this.actions[action].push(callback.bind(this.sceneContext))
+				return this
+			}
+		
+			doAction(action) {
+				for (let i = 0; i < this.actions[action].length; i++) {
+					this.actions[action][i](this.state, this.setState)
+				}
+			}
+		
+			setState(newState) {
+				this.state = Object.assign(this.state, newState)
+			}
+		
+			update() {
+				if (!this.loaded) {
+					this.doAction('load')
+					this.loaded = true
+				}
+				this.callback(this.state, this.setState)
+			}
+		
+			start() {
+				this.loaded = false
+				return this
+			}
+		}
+		
+		/**
+		* SceneHandler class
+		* 
+		* Tracks and manages all scenes.
+		*/
+		class SceneHandler {
+			constructor(initialScene, sceneContext) {
+				this.current = initialScene;
+				this.sceneContext = sceneContext || false
+				this.scenes = {}
+			}
+		
+			add(name, cb) {
+				this.scenes[name] = new Scene(cb, this.sceneContext)
+				return this.scenes[name]
+			}
+		
+			change(newScene) {
+				const scene = this.scenes[newScene]
+				if (!scene) {
+					throw {
+						message: "Invalid scene name: " + newScene
+					}
+				}
+				this.current = scene
+				this.current.start()
+			}
+		
+			update() {
+				this.current.update()
+			}
+		}
+		
+/**
+		 * Entity class
+		 * 
+		 * Base class for a single physics-bound entity.
+		 */
+		
+		class Entity {
+			constructor(x, y, w, h) {
+				this.x = x || 0
+				this.y = y || 0
+				this.w = w || BLOCK_SIZE
+				this.h = h || BLOCK_SIZE
+		
+				this.xVel = 0.2
+				this.yVel = 0
+				this.prevXVel = this.xVel
+				this.prevYVel = this.yVel
+		
+				this.prevX = this.x
+				this.prevY = this.y
+		
+				this.collisions = {}
+		
+				this.groundObject = null
+				this.friction = 1
+			}
+		
+			beforeCollision() {
+				this.yVel += GRAVITY
+		
+				// unset collisions
+				this.collisions.top = false
+				this.collisions.right = false
+				this.collisions.left = false
+				this.collisions.bottom = false
+				this.groundObject = null
+		
+				this.prevXVel = this.xVel
+				this.prevYVel = this.yVel
+				this.prevX = this.x
+				this.prevY = this.y
+				this.x += this.xVel
+				this.y += this.yVel
+			}
+		
+			update() {
+				// if on moving object, apply frictional force
+				if (this.groundObject) {
+					if (this.groundObject.xVel !== undefined) {
+						this.xVel += (this.groundObject.xVel - this.xVel) * this.groundObject.friction
+					}
+				}
+			}
+		
+			resolveComplexCollision(obj) {
+				const vertices = obj.vertices
+		
+				const vec = getCollisionResolutionVector(this, vertices)
+		
+				if (vec) {
+					this.xVel += vec.x
+					this.yVel += vec.y
+				}
+			}
+		
+			resolveYCollision(obj) {
+				this.yVel = 0
+				this.collisions.top = this.prevYVel < 0
+				this.collisions.bottom = this.prevYVel >= 0
+				this.y = this.prevYVel >= 0 ? obj.y - this.h : obj.y + obj.h
+		
+				if (this.prevYVel >= 0) {
+					this.groundObject = obj
+				}
+			}
+		
+			resolveXCollision(obj) {
+				this.xVel = 0
+				this.collisions.right = this.prevXVel > 0
+				this.collisions.left = this.prevXVel < 0
+				if (this.prevXVel !== 0) {
+					this.x = this.prevXVel > 0 ? obj.x - this.w : obj.x + obj.w
+				}
+			}
+		
+			resolveCollisions(collidingObjects) {
+				// sort collisions by overlap area this is a hacky(ish)
+				// way to make collision resolutions are less wacky
+				collidingObjects.sort(sortByOverlapArea(this))
+		
+				for (let i = 0; i < collidingObjects.length; i++) {
+					const obj = collidingObjects[i];
+		
+					// cases where we're touching the object but have already applied collision
+					if (this.x + this.w <= obj.x) {
+						this.collisions.right = true
+						continue;
+					}
+					if (this.x >= obj.x + obj.w) {
+						this.collisions.left = true
+						continue;
+					}
+					if (this.y + this.h <= obj.y) {
+						this.collisions.bottom = true
+						this.groundObject = obj
+						continue;
+					}
+					if (this.y >= obj.y + obj.h) {
+						this.collisions.top = true
+						continue;
+					}
+		
+					// apply collisions
+					if (obj.vertices) {
+						this.resolveComplexCollision(obj)
+					} else if (this.prevX + this.w <= obj.x || this.prevX >= obj.x + obj.w) {
+						this.resolveXCollision(obj)
+					} else if (this.prevY + this.h <= obj.y || this.prevY >= obj.y + obj.h) {
+						this.resolveYCollision(obj)
+					}
+				}
+			}
+		}
+		
+		
+/**
+		 * Player class
+		 *
+		 * Handles keyboard control of the player and special abilities
+		 * not found in normal entities
+		 */
+		
+		class Player extends Entity {
+			constructor(x, y, w, h) {
+				super(x, y, w, h)
+		
+				this.canJump = false
+				this.direction = 1 // last moved direction
+				this.r = 0
+		
+				this.defaultSpeed = 2.5
+				this.speed = this.defaultSpeed
+		
+				this.jumpTimer = 0
+				this.jumpLevel = 0
+				this.jumpLevelTimer = 0
+				this.highJumpTimer = 0
+				this.highJumpDuration = 25
+				this.wasOnGround = false
+		
+				this.sprintTimer = 0
+				this.sprintDuration = 20
+				this.sprintCooldown = 300
+				this.sprintSpeed = 7
+				this.trail = []
+		
+				this.groundPound = false
+		
+				this.dead = false
+				this.respawnTimer = 0
+				this.respawnDuration = 100
+				this.respawnPoint = { x, y }
+			}
+		
+			beforeCollision() {
+				if (!this.dead) {
+					super.beforeCollision()
+				}
+			}
+		
+			update() {
+				if (this.dead) {
+					this.respawnTimer--;
+					if (this.respawnTimer <= 0) {
+						this.respawn()
+					}
+					return;
+				}
+		
+				// call Entity initial update
+				super.update()
+		
+				// key controlled movement
+				if (keys.pressed('left')) {
+					this.xVel = -this.speed
+					this.direction = -1
+				}
+				else if (keys.pressed('right')) {
+					this.xVel = this.speed
+					this.direction = 1
+				} else {
+					this.xVel = 0
+				}
+		
+				// jumping
+				if (!this.wasOnGround && !keys.pressed('jump') && this.collisions.bottom) {
+					this.jumpLevelTimer = 15
+				}
+		
+				// countdown various jump timers ;)
+				this.jumpTimer = Math.max(0, this.jumpTimer - 1)
+				this.jumpLevelTimer = Math.max(0, this.jumpLevelTimer - 1)
+				this.highJumpTimer = Math.max(0, this.highJumpTimer - 1)
+		
+				// saves state of bottom collision
+				this.wasOnGround = this.collisions.bottom
+		
+				if (this.collisions.bottom && keys.pressed('jump')) {
+					if (this.jumpLevelTimer > 0) {
+						this.jumpLevel++
+					} else {
+						this.jumpLevel = 0
+					}
+		
+					this.jumpTimer = 15
+					this.yVel = -(4 + this.jumpLevel * 0.6)
+		
+					if (this.jumpLevel >= 3) {
+						this.highJumpTimer = this.highJumpDuration
+						this.jumpLevel = 0
+					}
+				}
+		
+				// extra height if key is held down
+				if (keys.pressed('jump') && this.jumpTimer > 0) {
+					this.yVel -= 0.2
+				}
+		
+				// high jump
+				if (this.highJumpTimer > 0) {
+					this.yVel -= 0.03
+				}
+		
+				// ground pounding
+				if (this.collisions.bottom) {
+					if (this.groundPound) {
+		
+					}
+					this.groundPound = false
+				} else {
+					if (keys.pressStart('ground_pound') && !this.groundPound) {
+						this.groundPound = true
+					}
+				}
+		
+				// ground pound has constant y velocity
+				if (this.groundPound) {
+					this.yVel = 13
+				}
+		
+				// sprinting
+				let sprinting = false;
+		
+				this.sprintTimer = Math.max(0, this.sprintTimer - 1)
+		
+				if (this.sprintTimer === 0 && keys.pressed('sprint')) {
+					this.sprintTimer = this.sprintCooldown
+					if (!this.collisions.bottom) {
+						this.yVel *= (1 + Math.sqrt(Math.abs(this.yVel)) / 8)
+					}
+				}
+		
+				if (this.sprintTimer > this.sprintCooldown - this.sprintDuration) {
+					this.speed = this.sprintSpeed
+					this.xVel = this.speed * this.direction
+					sprinting = true
+		
+				} else {
+					this.speed = this.defaultSpeed
+				}
+		
+				// rotation
+				if (this.sprintTimer > this.sprintCooldown - this.sprintDuration) {
+					this.r = (this.sprintCooldown - this.sprintTimer) / this.sprintDuration * 360 * this.direction
+				} else if (this.highJumpTimer > 0) {
+					this.r = (this.highJumpDuration - this.highJumpTimer) / this.highJumpDuration * 360 * this.direction
+				} else {
+					this.r = 0
+				}
+		
+				// trail
+				if ((this.groundPound || sprinting || this.highJumpTimer > 0)) {
+					this.trail.push([this.x, this.y, this.r])
+					if (this.trail.length > 20) {
+						this.trail.shift()
+					}
+				} else {
+					this.trail.shift()
+				}
+			}
+		
+			display() {
+				for (let i = 0; i < this.trail.length; i++) {
+					const p = this.trail[i]
+					push();
+					translate(p[0] + this.w / 2, p[1] + this.h / 2);
+					rotate(p[2]);
+					fill(113, 237, 78, i * (255 / (this.trail.length * 2)));
+					rect(-this.w / 2, -this.h / 2, this.w, this.h);
+					pop();
+				}
+		
+				push();
+				translate(this.x + this.w / 2, this.y + this.h / 2);
+				rotate(this.r);
+				fill(113, 237, 78);
+				rect(-this.w / 2, -this.h / 2, this.w, this.h);
+				pop();
+			}
+		
+			kill() {
+				this.dead = true
+				this.respawnTimer = this.respawnDuration
+			}
+		
+			respawn() {
+				this.x = this.prevX = this.respawnPoint.x
+				this.y = this.prevY = this.respawnPoint.y
+				this.dead = false
+			}
+		}
+		
+		
+/**
+		 * New Program
+		 * 
+		 * @author bravo bravo 2024
+		 */
+		
+		
+		// constants
+		const GRAVITY = 0.25;
+		const BLOCK_SIZE = 30;
+		const MAX_VIEW = BLOCK_SIZE * 20;
+		
+		const view = {
+			cursorX: 0,
+			cursorY: 0,
+			scale: 1,
+			aspect: 16 / 9
+		}
+		
+		/**
+		 * Game class
+		 * 
+		 * Brings everything together, let the magic begin.
+		 */
+		class Game {
+			constructor() {
+				this.scene = new SceneHandler('menu', this)
+				this.level = new LevelManager()
+			}
+		}
+		
+		let game, keys;
+		
+		function setup() {
+			createCanvas(window.innerWidth, window.innerHeight)
+			angleMode(DEGREES)
+		
+			handleResize()
+		
+			game = new Game() // we got a game, folks
+			keys = new KeyManager()
+		
+			/**
+			 * Register scenes
+			 */
+			game.scene.add('menu', function () {
+				background(0, 255, 0);
+			})
+		
+			game.scene.add('play', function (state, setState) {
+				const player = state.player
+		
+				background(17, 86, 120);
+		
+				this.level.update()
+				this.level.camera.follow(player)
+				this.level.display()
+		
+			}).on('load', function (state, setState) {
+				this.level.start(0)
+				const player = this.level.entities.find(function (entity) {
+					return entity instanceof Player
+				})
+				setState({
+					player: player
+				})
+				this.level.camera.center(player)
+			})
+		
+		
+			/**
+			 * Register tile types
+			 */
+			game.level.registerTile("#", function (w, h) {
+				noStroke()
+				fill(50);
+				rect(0, 0, w, h);
+				fill(100);
+				rect(w / 8, h / 8, w * 0.75, h * 0.75);
+				fill(50)
+				ellipse(w * 0.25, h * 0.25, w / 10, h / 10)
+				ellipse(w * 0.75, h * 0.25, w / 10, h / 10)
+				ellipse(w * 0.75, h * 0.75, w / 10, h / 10)
+				ellipse(w * 0.25, h * 0.75, w / 10, h / 10)
+				return get(0, 0, w, h);
+			})
+		
+			const spike = (x, y, w, h, angle) => {
+				push()
+				translate(x + w / 2, y + h / 2)
+				rotate(angle)
+				translate(-w / 2, -h / 2)
+				noStroke()
+				fill(130)
+				triangle(w / 2, 0, w, h, w / 2, h)
+				fill(180)
+				triangle(w / 2, 0, w / 2, h, 0, h)
+				fill(50)
+				triangle(w / 2, 2, w - 2, h, 2, h)
+				fill(100)
+				triangle(w / 2, h * 0.65, w * 0.64, h, w * 0.36, h)
+				fill(130)
+				triangle(w / 2, h * 0.65, w / 2, h, w * 0.36, h)
+				fill(35)
+				rect(0, h * 0.95, w, h * 0.05)
+				const d = w / 10
+				for (let i = 0; i < w; i += d) {
+					triangle(i, h, i + d / 2, h * 0.9, i + d, h)
+				}
+				pop()
+			}
+		
+			const slope = (x, y, w, h) => {
+				noStroke()
+				fill(50);
+				triangle(0, 0, w, h, 0, h)
+				fill(100);
+				triangle(w / 8, h * 3 / 8, w * 5 / 8, h * 7 / 8, w / 8, h * 7 / 8);
+				fill(50)
+				ellipse(w * 0.25, h * 0.75, w / 10, h / 10)
+			}
+		
+			game.level.registerTile('^', function (w, h) {
+				spike(0, 0, w, h, 0)
+				return get(0, 0, w, h)
+			}, function (x, y, w, h) {
+				return [
+					[x + w / 2, y],
+					[x + w, y + h],
+					[x, y + h]
+				]
+			})
+		
+			game.level.registerTile('>', function (w, h) {
+				spike(0, 0, w, h, 90)
+				return get(0, 0, w, h)
+			}, function (x, y, w, h) {
+				return [
+					[x, y],
+					[x + w, y + h / 2],
+					[x, y + h]
+				]
+			})
+		
+			game.level.registerTile('<', function (w, h) {
+				push()
+				scale(1, -1)
+				translate(0, -h)
+				spike(0, 0, w, h, -90)
+				pop()
+				return get(0, 0, w, h)
+			}, function (x, y, w, h) {
+				return [
+					[x + w, y],
+					[x + w, y + h],
+					[x, y + h / 2]
+				]
+			})
+		
+			game.level.registerTile('v', function (w, h) {
+				spike(0, 0, w, h, 180)
+				return get(0, 0, w, h)
+			}, function (x, y, w, h) {
+				return [
+					[x, y],
+					[x + w, y],
+					[x + w / 2, y + h]
+				]
+			})
+		
+			game.level.registerEntity("@", function (x, y, w, h) {
+				return new Player(x + 6, y + 6, w - 12, h - 12)
+			})
+		
+			game.level.registerTile('R', function (w, h) {
+				slope(0, 0, w, h)
+				return get(0, 0, w, h)
+			})
+		
+			game.level.registerTile('L', function (w, h) {
+				push()
+				translate(w, 0)
+				scale(-1, 1)
+				slope(0, 0, w, h)
+				pop()
+				return get(0, 0, w, h)
+			})
+		
+			game.level.registerTile('l', function (w, h) {
+				push()
+				translate(w, h)
+				scale(-1, -1)
+				slope(0, 0, w, h)
+				pop()
+				return get(0, 0, w, h)
+			})
+		
+			game.level.registerTile('r', function (w, h) {
+				push()
+				translate(0, h)
+				scale(1, -1)
+				slope(0, 0, w, h)
+				pop()
+				return get(0, 0, w, h)
+			})
+		
+			/**
+			 * Register key code/command mapping
+			 */
+			keys.register('jump', 'Jump', 87)
+			keys.register('right', 'Move right', 68)
+			keys.register('left', 'Move left', 65)
+			keys.register('sprint', 'Sprint', 16)
+			keys.register('ground_pound', 'Ground pound', 83)
+		
+			/**
+			 * Create levels
+			 */
+			game.level.add(
+				{
+					title: "First level"
+				},
+				[
+					"##############",
+					"#r           #",
+					"#@      L#> <#",
+					"#####R  ##> <#",
+					'##########> <#',
+					"#     l##v   #",
+					"#      ##    #",
+					"###    ##    #",
+					"####         #",
+					"#####   ^    #",
+					"##### # #    #",
+					"##### # #    #",
+					"####         #",
+					"##        ####",
+					"###   ########",
+					"##############"
+				]
+			)
+		
+			game.scene.change('play')
+		
+			game.level.camera.viewport.w = width / view.scale
+			game.level.camera.viewport.h = height / view.scale
+		}
+		
+		function draw() {
+			background(0)
+			push()
+			scale(view.scale)
+			try {
+				game.scene.update()
+			} catch (e) {
+				console.log(e)
+			}
+			fill(255);
+			pop()
+		
+			keys.update()
+		}
+		
+		function keyPressed() {
+			keys.keyPressed(keyCode)
+		}
+		function keyReleased() {
+			keys.keyReleased(keyCode)
+		}
+		
+		function windowResized() {
+			resizeCanvas(window.innerWidth, window.innerHeight)
+		
+			handleResize()
+		
+			game.level.camera.viewport.w = width / view.scale
+			game.level.camera.viewport.h = height / view.scale
+		}
+		
+		Object.assign(window, {
+			setup,
+			draw,
+			keyPressed,
+			keyReleased,
+			windowResized
+		})
+	</script>
+    <script>
+      var frame = requestAnimationFrame(Math.cos)
+      while(frame--) {
+          cancelAnimationFrame(frame)
+      }
+    </script>
+  </body>
+</html>

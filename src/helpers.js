@@ -40,10 +40,10 @@ function sortByOverlapArea(obj) {
 }
 
 function handleResize() {
-const scaleX = width / MAX_VIEW
-const scaleY = height / (MAX_VIEW / view.aspect)
+	const scaleX = width / MAX_VIEW
+	const scaleY = height / (MAX_VIEW / view.aspect)
 
-view.scale = max(scaleX, scaleY)
+	view.scale = max(scaleX, scaleY)
 }
 
 function closestPointOnLine(px, py, x1, y1, x2, y2) {
